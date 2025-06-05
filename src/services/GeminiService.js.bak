@@ -1,0 +1,376 @@
+/**
+ * GeminiService.js
+ * Service for interacting with Google's Generative AI (Gemini) API
+ * With fallback mock responses for development
+ */
+
+const API_KEY = 'AIzaSyD6urTRDhZ91lbR8P_Hmq7X02ZIYRuoV9k';
+
+// Flag to use mock responses if API calls fail - set to true to fall back to mock responses if API fails
+const USE_MOCK_FALLBACK = true;
+
+// Track if we've initialized
+let isInitialized = false;
+
+/**
+ * Initialize the Gemini API client
+ */
+const initializeGemini = async () => {
+  if (isInitialized) {
+    console.log('Gemini API already initialized');
+    return { initialized: true, timestamp: new Date().toISOString() };
+  }
+
+  try {
+    // Simple test to check if the API is accessible
+    await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`)
+      .then(response => {
+        if (!response.ok) throw new Error(`API responded with status ${response.status}`);
+        return response.json();
+      })
+      .then(data => {
+        console.log('Gemini API initialized successfully');
+        isInitialized = true;
+      });
+
+    return {
+      initialized: true,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Failed to initialize Gemini API:', error);
+    console.log('Will use mock responses when needed');
+    return {
+      initialized: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
+  }
+};
+
+/**
+ * Send a prompt to Gemini and get a response
+ * 
+ * @param {string} prompt - The prompt to send to the Gemini model
+ * @param {Object} options - Additional options for the request
+ * @returns {Promise<string>} The response from the Gemini model
+ */
+/**
+ * Mock response generator based on prompt type
+ */
+const getMockResponse = (promptType, details) => {
+  switch(promptType) {
+    case 'symptoms':
+      return `## Analysis of ${details.petType}'s Symptoms
+
+### Possible Causes:
+1. Respiratory infection (most likely)
+2. Allergic reaction
+3. Heart condition
+
+### Recommended Actions:
+1. Ensure your pet is getting plenty of rest
+2. Make sure fresh water is available
+3. Monitor breathing rate and energy levels
+4. Schedule a veterinary appointment within 48 hours
+
+### Urgency Level: Moderate
+
+**Important:** This is not a substitute for professional veterinary care. If symptoms worsen, seek immediate veterinary attention.`;
+      
+    case 'behavior':
+      return `## Behavior Analysis
+
+### Assessment:
+This behavior is common in ${details.petType}s and typically indicates territorial protection instinct.
+
+### Recommendations:
+1. Gradual desensitization training
+2. Positive reinforcement when calm around triggers
+3. Consistent daily exercise to reduce anxiety
+4. Consider a calming vest or supplement
+
+### Is this concerning? 
+Mildly concerning if increasing in frequency or intensity, but generally manageable with proper training.`;
+      
+    case 'diet':
+      return `## Dietary Recommendations for your ${details.petType}
+
+### Daily Caloric Intake:
+${details.petType === 'cat' ? '250-300' : '400-900'} calories based on weight, age and activity level
+
+### Ideal Food Composition:
+- Protein: 25-30%
+- Fats: 15-20%
+- Carbohydrates: Limited amounts
+
+### Specific Recommendations:
+1. High-quality ${details.petType} food with real meat as first ingredient
+2. Avoid fillers like corn and wheat
+3. Add omega-3 supplements for coat health
+4. Ensure adequate hydration
+
+### Foods to Avoid:
+- Chocolate
+- Onions/Garlic
+- Grapes/Raisins
+- Xylitol (artificial sweetener)
+- Alcohol`;
+      
+    case 'medical':
+      return `## Medical History Analysis
+
+### Key Observations:
+1. Consistent vaccination schedule (good)
+2. Recent increase in mild symptoms
+3. Weight has been stable over time
+
+### Recommendations:
+1. Continue regular check-ups
+2. Consider blood work at next appointment
+3. Monitor for any changes in eating/drinking habits
+4. Dental cleaning recommended within next 6 months
+
+### Preventive Care Suggestions:
+1. Monthly parasite prevention
+2. Regular dental care
+3. Age-appropriate screening tests
+4. Maintain healthy weight through diet and exercise`;
+      
+    default:
+      return "I've analyzed the information and have several recommendations for your pet's health and wellbeing. Please consult with your veterinarian for personalized advice.";
+  }
+};
+
+/**
+ * Generate content with either API or fallback to mock responses
+ */
+const generateContent = async (prompt, options = {}) => {
+  try {
+    console.log('Sending request to Gemini API with prompt:', prompt.substring(0, 100) + '...');
+    
+    // Format the request body according to Gemini API requirements
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            { text: prompt }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: options.temperature || 0.7,
+        topK: options.topK || 40,
+        topP: options.topP || 0.95,
+        maxOutputTokens: options.maxOutputTokens || 1024,
+      }
+    };
+    
+    console.log('Request body:', JSON.stringify(requestBody).substring(0, 200) + '...');
+    
+    // API endpoints to try in order
+    const apiEndpoints = [
+      `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${API_KEY}`
+    ];
+    
+    let apiResponse = null;
+    let apiData = null;
+    let lastError = null;
+    
+    // Try each endpoint in sequence
+    for (const endpoint of apiEndpoints) {
+      try {
+        console.log(`Trying endpoint: ${endpoint}`);
+        apiResponse = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody)
+        });
+        
+        if (apiResponse.ok) {
+          apiData = await apiResponse.json();
+          console.log('Successful API response from endpoint:', endpoint);
+          
+          // Extract and return the response text
+          if (apiData.candidates && 
+              apiData.candidates[0]?.content?.parts && 
+              apiData.candidates[0].content.parts[0]?.text) {
+            return apiData.candidates[0].content.parts[0].text;
+          } else {
+            console.error('Unexpected response format from Gemini API:', JSON.stringify(apiData).substring(0, 200));
+            lastError = new Error('Unexpected response format from Gemini API');
+          }
+        } else {
+          const errorText = await apiResponse.text();
+          console.error(`API error (${endpoint}):`, apiResponse.status, errorText);
+          lastError = new Error(`API error: ${apiResponse.status} - ${errorText}`);
+        }
+      } catch (endpointError) {
+        console.error(`Error with endpoint ${endpoint}:`, endpointError);
+        lastError = endpointError;
+      }
+    }
+    
+    // If we've reached here, all endpoints failed
+    console.error('All Gemini API endpoints failed');
+    
+    // If fallback is enabled, use mock responses
+    if (USE_MOCK_FALLBACK) {
+      console.log('Using mock response fallback');
+      // Determine the type of prompt for appropriate mock response
+      let mockType = 'general';
+      let details = { petType: 'pet' };
+      
+      if (prompt.toLowerCase().includes('symptoms')) {
+        mockType = 'symptoms';
+        details.petType = prompt.toLowerCase().includes('cat') ? 'cat' : 'dog';
+      } else if (prompt.toLowerCase().includes('behavior') || prompt.toLowerCase().includes('behaviour')) {
+        mockType = 'behavior';
+        details.petType = prompt.toLowerCase().includes('cat') ? 'cat' : 'dog';
+      } else if (prompt.toLowerCase().includes('diet') || prompt.toLowerCase().includes('nutrition')) {
+        mockType = 'diet';
+        details.petType = prompt.toLowerCase().includes('cat') ? 'cat' : 'dog';
+      } else if (prompt.toLowerCase().includes('medical') || prompt.toLowerCase().includes('health')) {
+        mockType = 'medical';
+      }
+      
+      return getMockResponse(mockType, details);
+    } else {
+      return "Sorry, I couldn't communicate with the AI service. Please try again later.";
+    }
+    } catch (fetchError) {
+      console.error('Fetch error in Gemini API call:', fetchError);
+      
+      // Use mock responses if API calls fail and fallback is enabled
+      if (USE_MOCK_FALLBACK) {
+        console.log('Using mock response fallback due to fetch error');
+        // Default to general mock response
+        return getMockResponse('general', { petType: 'pet' });
+      } else {
+        return "Error connecting to the AI service: " + fetchError.message;
+      }
+    }
+  } catch (error) {
+    console.error('General error in generateContent:', error);
+    return "There was an error processing your request: " + error.message;
+  }
+};
+
+/**
+ * Generate a pet health analysis based on symptoms
+ * 
+ * @param {string} petType - Type of pet (dog, cat, etc.)
+ * @param {string} symptoms - Description of symptoms
+ * @returns {Promise<string>} Analysis of the symptoms
+ */
+const analyzeSymptoms = async (petType, symptoms) => {
+  const prompt = `As a veterinary AI assistant, analyze these symptoms for a ${petType}:
+  
+${symptoms}
+
+Provide a detailed analysis including:
+1. Possible causes
+2. Recommended actions
+3. Urgency level (low, moderate, high, emergency)
+
+Note: This is NOT a substitute for professional veterinary care.`;
+
+  return await generateContent(prompt, { temperature: 0.3 });
+};
+
+/**
+ * Analyze pet behavior and provide recommendations
+ * 
+ * @param {string} petType - Type of pet (dog, cat, etc.)
+ * @param {string} behavior - Description of behavior
+ * @returns {Promise<string>} Analysis and recommendations
+ */
+const analyzeBehavior = async (petType, behavior) => {
+  const prompt = `As a pet behavior specialist, analyze this behavior for a ${petType}:
+  
+${behavior}
+
+Provide:
+1. Possible causes of this behavior
+2. Whether it's concerning or normal
+3. Recommended actions or training approaches
+4. Tips for the pet owner`;
+
+  return await generateContent(prompt, { temperature: 0.4 });
+};
+
+/**
+ * Generate dietary recommendations for a pet
+ * 
+ * @param {Object} petInfo - Information about the pet
+ * @returns {Promise<string>} Dietary recommendations
+ */
+const provideDietaryRecommendations = async (petInfo) => {
+  const prompt = `As a pet nutrition specialist, provide dietary recommendations for a ${petInfo.type} with the following characteristics:
+  
+- Age: ${petInfo.age}
+- Weight: ${petInfo.weight}${petInfo.weightUnit || 'lbs'}
+- Health conditions: ${petInfo.healthConditions || 'None specified'}
+- Activity level: ${petInfo.activityLevel || 'Moderate'}
+
+Provide:
+1. Recommended daily caloric intake
+2. Ideal macronutrient balance
+3. Specific food suggestions
+4. Feeding schedule
+5. Foods to avoid`;
+
+  return await generateContent(prompt, { temperature: 0.4 });
+};
+
+/**
+ * Analyze medical history and provide insights
+ * 
+ * @param {Array} medicalRecords - Array of medical records
+ * @returns {Promise<string>} Analysis and recommendations
+ */
+const analyzeMedicalHistory = async (medicalRecords) => {
+  const records = medicalRecords.map(r => 
+    `- Date: ${r.date}, Type: ${r.type}, Notes: ${r.notes || 'None'}`
+  ).join('\n');
+
+  const prompt = `As a veterinary medical analyst, review these medical records:
+  
+${records}
+
+Provide:
+1. Notable patterns or trends
+2. Potential concerns based on the history
+3. Recommendations for follow-up care
+4. Preventive health suggestions`;
+
+  return await generateContent(prompt, { temperature: 0.3 });
+};
+
+const GeminiService = {
+  initializeGemini,
+  generateContent,
+  analyzeSymptoms,
+  analyzeBehavior,
+  provideDietaryRecommendations,
+  analyzeMedicalHistory,
+};
+
+// Initialize the API at startup
+setTimeout(() => {
+  console.log('Initializing Gemini AI service...');
+  initializeGemini()
+    .then(result => {
+      if (result.initialized) {
+        console.log('Gemini service initialized successfully');
+      } else {
+        console.log('Gemini service initialization failed, will use mock responses');
+      }
+    })
+    .catch(err => console.error('Error initializing Gemini service:', err));
+}, 1000);
+
+export default GeminiService;
